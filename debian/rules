@@ -1,0 +1,150 @@
+#!/usr/bin/make -f
+# See debhelper(7) (uncomment to enable)
+# output every command that modifies files on the build system.
+#export DH_VERBOSE = 1
+
+SHELL = /bin/bash
+
+# see FEATURE AREAS in dpkg-buildflags(1)
+#export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# see ENVIRONMENT in dpkg-buildflags(1)
+# package maintainers to append CFLAGS
+#export DEB_CFLAGS_MAINT_APPEND  = -Wall -pedantic
+# package maintainers to append LDFLAGS
+#export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+
+LDFLAGS=
+CPPFLAGS=-Wdate-time
+CFLAGS=-O3 -g -O2 -Wformat -Werror=format-security
+CXXFLAGS=-O3 --std=c++11
+
+#l_SONAME=57
+
+TARGETS := \
+	x86_64-w64-mingw32 \
+	i686-w64-mingw32
+WINEPREFIX = $(CURDIR)/build-$$target/wineprefix
+WINEDLLPATH = \
+$(CURDIR)/build-$${target}/bin:\
+$(CURDIR)/build-$${target}/lib:\
+$(CURDIR)/build-$${target}/stubdata:\
+$(CURDIR)/build-$${target}/tools/testfw
+
+EXECUTE = \
+	FORCE_WINEPREFIX="$(WINEPREFIX)" \
+	PATH="$(WINEDLLPATH):$$PATH" \
+	WINEDLLPATH="$(WINEDLLPATH)" \
+	LDFLAGS="$(LDFLAGS)" CFLAGS="$(CFLAGS)" \
+	CXXFLAGS="$(CXXFLAGS)" CPPFLAGS="$(CPPFLAGS)" \
+	/usr/bin/$${target}
+
+
+
+%:
+	dh $@
+	# after $@
+
+
+# dh_make generated override targets
+# This is example for Cmake (See https://bugs.debian.org/641051 )
+#override_dh_auto_configure:
+#	dh_auto_configure -- #	-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH)
+
+.PHONY: configure build-arch install-arch
+
+override_dh_clean:
+	for target in $(TARGETS); do \
+		rm -rf build-$$target; \
+	done
+	dh_clean
+
+
+override_dh_auto_configure:
+	for target in $(TARGETS) ; \
+	do \
+		mkdir -p build-$$target && \
+		pushd build-$$target && \
+		$(EXECUTE) /usr/bin/prepare-winedllpath && \
+		$(EXECUTE) ../configure --prefix=/usr/$$target/ \
+				--build=$$target --host=$$target && \
+		popd || exit 1 ; \
+	done
+
+override_dh_auto_build:
+	for target in $(TARGETS) ; \
+	do \
+		pushd build-$$target && \
+		$(EXECUTE) make && \
+		popd || exit 1 ; \
+	done
+
+override_dh_auto_install:
+	for target in $(TARGETS) ; \
+	do \
+		pushd build-$$target && \
+		$(EXECUTE) make DESTDIR=$(CURDIR)/debian/tmp install  && \
+		echo $(CURDIR)/debian/tmp/usr/$${target}/lib/*.dll.a ; \
+		ls $(CURDIR)/debian/tmp/usr/$${target}/lib/*.dll.a ; \
+		for d in  $(CURDIR)/debian/tmp/usr/$${target}/lib/*.dll.a ; \
+		do \
+			$(EXECUTE) eval echo "'|$$RANLIB|' '|\$$RANLIB|' '|\\$$RANLIB|' -D \"$$d\"" && \
+			$(EXECUTE) $${target}-ranlib "$$d" || exit 2 ; \
+		done && \
+		popd || exit 1 ; \
+	done
+	dh_install
+	dh_missing --list-missing
+
+override_dh_installdocs-indep:
+	dh_installdocs -i
+
+
+override_dh_strip:
+	for target in $(TARGETS) ; \
+	do \
+		DEB_TARGET_GNU_TYPE="$$target" $(EXECUTE) fakeroot dh_strip ; \
+	done
+	#fakeroot dh_strip -plibicu$(l_SONAME) --dbg-package=libicu$(l_SONAME)-mingw-w64-dbg
+	#fakeroot dh_strip -picu-devtools --dbg-package=icu-devtools-mingw-w64-dbg
+	# libicudata library doesn't contain any debug symbols, remove that
+	#for file in `find debian/libicu$(l_SONAME)-mingw-w64-dbg/usr/lib/debug -type f -print`; do \
+	#	fakeroot /bin/sh -c "if ! nm -a '$$file' | grep -q debug; then rm '$$file' ; fi"; \
+	#done
+
+binary:	
+	dh binary --sourcedirectory=$(CURDIR)
+	# after dh binary
+
+override_dh_testroot:
+	fakeroot dh_testroot -O --sourcedirectory=$(CURDIR)
+	#fakeroot dh_testroot -O --sourcedirectory=$(CURDIR)
+override_dh_fixperms:
+	fakeroot  dh_fixperms -O --sourcedirectory=$(CURDIR)
+override_dh_compress:
+	fakeroot  dh_compress -O --sourcedirectory=$(CURDIR)
+override_dh_makeshlibs:
+	for target in $(TARGETS) ; \
+	do \
+		$(EXECUTE) env DEB_TARGET_GNU_TYPE="$$target" fakeroot dh_makeshlibs -O --sourcedirectory=$(CURDIR) ; \
+	done
+
+override_dh_gencontrol:
+	fakeroot dh_gencontrol -O --sourcedirectory=$(CURDIR)
+override_dh_md5sums:
+	fakeroot dh_md5sums -O --sourcedirectory=$(CURDIR)
+override_dh_builddeb:
+	fakeroot dh_builddeb -O --sourcedirectory=$(CURDIR)
+
+%:
+	dh $@ --sourcedirectory=$(CURDIR)
+	#dh $@ --sourcedirectory=$(CURDIR/)source/ --parallel
+
+.PHONY: override_dh_clean override_dh_auto_configure override_dh_auto_build \
+	override_dh_auto_install override_dh_installdocs-indep \
+	override_dh_strip
+
+
+# Local Variables:
+# compile-command: "cd .. ; debuild -renv -j4"
+# End:
